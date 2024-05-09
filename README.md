@@ -1,1 +1,3 @@
 # Smart Home Water Flow Sensing and Control using ESPHome and Home Assistant
+
+This was my final year project for my BEng in Mechatronics Engineering. Write up and open-sourced files coming soon...
