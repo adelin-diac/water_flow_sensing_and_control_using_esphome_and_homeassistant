@@ -47,3 +47,13 @@ In the end, the system was configured to work in two ways:
 The devices all communicated via Home Assistant. Node-RED was used to do any heavier processing/integrations.
 
 See the [media](./media) directory for more images.
+
+## Videos
+
+You can see a video of me pressing a button in Home Assistant which causes the ball valve to open/close here:
+
+<video src="./media/controlling_device_via_home_assistant.mp4" width="320" height="240" controls></video>
+
+You can see a video of my SolidWorks model of the final assembly here:
+
+<video src="./media/solidworks_final_assembly_valve_movement.mp4" width="320" height="240" controls></video>
