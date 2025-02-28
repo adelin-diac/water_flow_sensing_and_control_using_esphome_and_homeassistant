@@ -50,10 +50,6 @@ See the [media](./media) directory for more images.
 
 ## Videos
 
-You can see a video of me pressing a button in Home Assistant which causes the ball valve to open/close here:
+You can see a video of me pressing a button in Home Assistant which causes the ball valve to open/close [here](https://drive.google.com/file/d/139T37PPl8u4V6MZUj5RB6bhB8E7ICn2o/view?usp=sharing):
 
-<video src="./media/controlling_device_via_home_assistant.mp4" width="320" height="240" controls></video>
-
-You can see a video of my SolidWorks model of the final assembly here:
-
-<video src="./media/solidworks_final_assembly_valve_movement.mp4" width="320" height="240" controls></video>
+You can see a video of my SolidWorks model of the final assembly [here](https://drive.google.com/file/d/1ycCI5a3zN7IQQQPo0uJfQ2lbNPvKIrb1/view?usp=sharing):
