@@ -40,8 +40,10 @@ The temperature sensor is shown below:
 
 In the end, the system was configured to work in two ways:
 
-1. The water control device acted as a smart TRV, and the hot water flow (ie how much the ball valve was open) was controlled by the temperature setpoint defined in Home Assistant. The temperature sensor was used to measure the temperature in the room.
+1. The water control device acted as a smart TRV, and the hot water flow (ie how much the ball valve was open) was controlled by the temperature setpoint defined in Home Assistant. The temperature sensor was used to measure the temperature in the room. This setup implemented a PID controller and based on measurements of the device & average room values in Ireland, the system was simulated to see how a room could be heated using this setup. The simulation was done in an [Excel file](https://docs.google.com/spreadsheets/d/1R-e4HWdBuG948Ufl9aNrg3_9wH5RYTUA/edit?usp=sharing&ouid=111026779034388612254&rtpof=true&sd=true), and the graphs (see [pid_simulations](./pid_simulations)) show how the temperature in a room would change based on the initial temperature, outside temperature & heat loss of the room.
 
 2. The water control device was used as a smart water meter for a home. The flow rate was measured and displayed on the LCD screen. The data from this could be used to calculate & predict usage and also alert the user if there was a leak.
 
 The devices all communicated via Home Assistant. Node-RED was used to do any heavier processing/integrations.
+
+See the [media](./media) directory for more images.
