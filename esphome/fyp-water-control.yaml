@@ -1,0 +1,524 @@
+esphome:
+  name: fyp-water-control
+  friendly_name: FYP Water Control
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+#######################################
+# Home Assistant & WiFi & OTA Updates #
+#######################################
+logger:
+api:
+  encryption:
+    key: !secret WATER_CONTROL_API_KEY
+ota:
+  password: !secret WATER_CONTROL_OTA_PASSWORD
+wifi:
+  ssid: !secret WIFI_SSID
+  password: !secret WIFI_PASSWORD
+  # Manual IP for convenience when pinging
+  manual_ip:
+    static_ip: !secret WATER_CONTROL_STATIC_IP
+    gateway: !secret HOTSPOT_DEFAULT_GATEWAY
+    subnet: !secret HOTSPOT_SUBNET
+  # Fallback Access Point - If WiFi fails, can still communicate with it
+  ap:
+    ssid: !secret WATER_CONTROL_AP_SSID
+    password: !secret WATER_CONTROL_AP_PASSWORD
+captive_portal:
+web_server:
+  port: "80"
+
+globals:
+  - id: stepper_delay
+    # The delay between execution of each step on stepper motor
+    type: int
+    initial_value: "10"
+
+  - id: max_rotary_encoder_position
+    # Based on testing, max value is 8 when valve closes
+    # IF CHANGING THIS, UPDATE water_valve_position
+    type: int
+    initial_value: "8"
+
+script:
+  ###############################################
+  ###### PM STEPPER MOTOR SEQUENCE OUTPUTS ######
+  ###############################################
+  - id: sequence_reset
+    then:
+      - output.turn_off: stepper_enable_pin
+      - output.turn_off: stepper_black_cable
+      - output.turn_off: stepper_brown_cable
+      - output.turn_off: stepper_orange_cable
+      - output.turn_off: stepper_yellow_cable
+
+  ### Sequences taken from datasheet of stepper motor
+  ### CW       = 1 -> 2 -> 3 -> 4
+  ### Anti-CW  = 4 -> 3 -> 2 -> 1
+  - id: sequence_row_1
+    then:
+      - output.turn_off: stepper_black_cable
+      - output.turn_on: stepper_brown_cable
+      - output.turn_on: stepper_orange_cable
+      - output.turn_off: stepper_yellow_cable
+
+  - id: sequence_row_2
+    then:
+      - output.turn_off: stepper_black_cable
+      - output.turn_on: stepper_brown_cable
+      - output.turn_off: stepper_orange_cable
+      - output.turn_on: stepper_yellow_cable
+
+  - id: sequence_row_3
+    then:
+      - output.turn_on: stepper_black_cable
+      - output.turn_off: stepper_brown_cable
+      - output.turn_off: stepper_orange_cable
+      - output.turn_on: stepper_yellow_cable
+
+  - id: sequence_row_4
+    then:
+      - output.turn_on: stepper_black_cable
+      - output.turn_off: stepper_brown_cable
+      - output.turn_on: stepper_orange_cable
+      - output.turn_off: stepper_yellow_cable
+
+  ##################################
+  ### OPEN / CLOSE VALVE SCRIPTS ###
+  ##################################
+  - id: open_water_valve
+    then:
+      - output.turn_on: stepper_enable_pin
+      - while:
+          condition:
+            #### ASSUMING WE ROTATE ANTICLOCKWISE TO CLOSE THE VALVE ####
+            ### IF valve_open_limit_switch IS ON, THIS WON'T RUN ###
+            - binary_sensor.is_off: valve_open_limit_switch
+          then:
+            - script.execute: sequence_row_4
+            - delay: !lambda |-
+                return id(stepper_delay);
+            - script.execute: sequence_row_3
+            - delay: !lambda |-
+                return id(stepper_delay);
+            - script.execute: sequence_row_2
+            - delay: !lambda |-
+                return id(stepper_delay);
+            - script.execute: sequence_row_1
+            - delay: !lambda |-
+                return id(stepper_delay);
+      - output.turn_off: stepper_enable_pin
+
+  - id: close_water_valve
+    then:
+      - output.turn_on: stepper_enable_pin
+      - while:
+          condition:
+            #### ASSUMING WE ROTATE CLOCKWISE TO CLOSE THE VALVE ####
+            ### IF valve_closed_limit_switch IS ON, THIS WON'T RUN ###
+            - binary_sensor.is_off: valve_closed_limit_switch
+          then:
+            - script.execute: sequence_row_1
+            - delay: !lambda |-
+                return id(stepper_delay);
+            - script.execute: sequence_row_2
+            - delay: !lambda |-
+                return id(stepper_delay);
+            - script.execute: sequence_row_3
+            - delay: !lambda |-
+                return id(stepper_delay);
+            - script.execute: sequence_row_4
+            - delay: !lambda |-
+                return id(stepper_delay);
+      - output.turn_off: stepper_enable_pin
+
+  - id: move_valve_to_position
+    parameters:
+      required_position: int
+    then:
+      - logger.log:
+          format: "Moving to position - %d. Current Position - %d."
+          args: ["required_position", "id(ball_valve_rotary_encoder).state"]
+
+      - if:
+          condition:
+            # If we're told to fully open or close, just execute regular scripts which push until trip switch is hit
+            - lambda: return required_position == 0 || required_position == id(max_rotary_encoder_position);
+          then:
+            - if:
+                condition:
+                  - lambda: return required_position == 0;
+                then:
+                  - logger.log: "OPENING VALVE FULLY"
+                  - script.execute: open_water_valve
+                else:
+                  - logger.log: "CLOSING VALVE FULLY"
+                  - script.execute: close_water_valve
+
+          # If we're looking to move to a position in the range 1 -> (max-1), then execute this
+          else:
+            # BALL_VALVE_ROTARY_ENCODER = Max => Valve Closed
+            # BALL_VALVE_ROTARY_ENCODER = 0 => Valve Open
+            - while:
+                condition:
+                  # While not at the required position
+                  - lambda: return required_position != id(ball_valve_rotary_encoder).state;
+                then:
+                  # ENABLE MOTOR IN CASE IT TURNS OFF
+                  - output.turn_on: stepper_enable_pin
+
+                  - if:
+                      condition:
+                        - lambda: return required_position < id(ball_valve_rotary_encoder).state;
+                      then:
+                        # GO OPEN VALVE DIRECTION => ANTICLOCKWISE
+                        - script.execute: sequence_row_4
+                        - delay: !lambda |-
+                            return id(stepper_delay);
+                        - script.execute: sequence_row_3
+                        - delay: !lambda |-
+                            return id(stepper_delay);
+                        - script.execute: sequence_row_2
+                        - delay: !lambda |-
+                            return id(stepper_delay);
+                        - script.execute: sequence_row_1
+                        - delay: !lambda |-
+                            return id(stepper_delay);
+
+                  - if:
+                      condition:
+                        - lambda: return required_position > id(ball_valve_rotary_encoder).state;
+                      then:
+                        # GO CLOSE VALVE DIRECTION => CLOCKWISE
+                        - script.execute: sequence_row_1
+                        - delay: !lambda |-
+                            return id(stepper_delay);
+                        - script.execute: sequence_row_2
+                        - delay: !lambda |-
+                            return id(stepper_delay);
+                        - script.execute: sequence_row_3
+                        - delay: !lambda |-
+                            return id(stepper_delay);
+                        - script.execute: sequence_row_4
+                        - delay: !lambda |-
+                            return id(stepper_delay);
+
+                  # DISABLE MOTOR ONCE POSITION REACHED
+                  - output.turn_off: stepper_enable_pin
+
+  - id: stop_valve_rotation
+    then:
+      - output.turn_off: stepper_enable_pin
+
+  ############################
+  ## ROTARY ENCODER COUNTER ##
+  ############################
+  - id: reset_rotary_encoder_count
+    then:
+      - sensor.rotary_encoder.set_value:
+          id: ball_valve_rotary_encoder
+          value: 0
+
+sensor:
+  ####################################################
+  ## ROTARY ENCODER - FOR KEEPING TRACK OF POSITION ##
+  ####################################################
+  - platform: rotary_encoder
+    name: "Rotary Encoder"
+    id: ball_valve_rotary_encoder
+    min_value: 0
+    publish_initial_value: true
+    pin_a:
+      number: GPIO33
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    pin_b:
+      number: GPIO25
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+
+  #############################
+  ## YFB7 THERMISTOR SENSOR  ##
+  #############################
+  - platform: ntc
+    sensor: resistance_sensor
+    calibration:
+      b_constant: 3950
+      reference_temperature: 25°C
+      reference_resistance: 50kOhm
+    id: supply_water_temperature_sensor
+    name: Water Temperature
+
+  - platform: resistance
+    id: resistance_sensor
+    sensor: thermistor_ref_sensor
+    configuration: DOWNSTREAM
+    resistor: 51kOhm
+    reference_voltage: 3.27
+
+  - platform: adc
+    id: thermistor_ref_sensor
+    pin: GPIO32
+    attenuation: auto
+    update_interval: never
+
+  #######################
+  ## YFB7 PULSE OUTPUT ##
+  #######################
+  - platform: pulse_counter
+    pin:
+      number: GPIO16
+      mode:
+        input: true
+        pullup: true
+    name: "Flow Rate"
+    id: flowrate_sensor
+    use_pcnt: true
+    update_interval: 30s
+    unit_of_measurement: "L/min"
+    filters:
+      # F=(11*Q), Q=L/MIN±3%
+      # 660 = 11*60
+      # ESPHome automatically adjusts reading to pulses per minute
+      # We want pulses per second / 11
+      - lambda: return (x / 660);
+    # total:
+    #   name: 'Total Pulse Count'
+
+  #######################################
+  ## INTEGRATE FLOW RATE TO GET VOLUME ##
+  #######################################
+  - platform: integration
+    sensor: flowrate_sensor
+    time_unit: min
+    name: "Volumetric Water Usage"
+    id: water_volume_accumulator
+    state_class: total_increasing
+    device_class: water
+    # restore: true
+
+######################
+#### OLED DISPLAY ####
+######################
+external_components:
+  # External Component needed because not integrated yet
+  - source: github://bearpawmaxim/esphome@pr3625fix
+    components: ["gc9a01"]
+font:
+  - file: "gfonts://Roboto"
+    id: font_roboto
+    size: 20
+  - file: "gfonts://Material+Symbols+Outlined"
+    id: icon_font_30
+    size: 30
+    glyphs: [
+        "\U0000e1ff", # thermostat
+        "\U0000e176", # water waves
+        "\U0000e224", # valve
+      ]
+spi:
+  clk_pin: GPIO14
+  mosi_pin: GPIO13
+display:
+  - platform: gc9a01
+    cs_pin: GPIO27
+    dc_pin: GPIO12
+    reset_pin: GPIO26
+    rotation: 0
+    update_interval: 15s
+    # Display is 240x240
+    lambda: |-
+      // Flow rate
+      it.print(24, 40, id(icon_font_30), "\U0000e1ff");
+      it.printf(60, 40, id(font_roboto), "%.1f °C", id(supply_water_temperature_sensor).state);
+
+      // Water Temperature
+      it.print(24, 80, id(icon_font_30), "\U0000e176");
+      it.printf(60, 80, id(font_roboto), "%.1f L/min", id(flowrate_sensor).state);
+
+      // Position/open-close state
+      it.print(24, 120, id(icon_font_30), "\U0000e224");
+      if(id(valve_open_limit_switch).state){
+        it.printf(60, 120, id(font_roboto), "OPEN");
+      }else if (id(valve_closed_limit_switch).state) {
+        it.printf(60, 120, id(font_roboto), "CLOSED");
+      } else {
+        it.printf(60, 120, id(font_roboto), "PARTIALLY OPEN");
+      }
+
+switch:
+  #############################################
+  ## THERMISTOR SWITCH - PROMPT TO READ TEMP ##
+  #############################################
+  # Keeping the pin that thermistor is connected to powered at all times,
+  ## can cause the temperature reading to be slightly off, so only power it
+  ### at short intervals, and read the temperature then
+  - platform: gpio
+    pin: GPIO23
+    id: thermistor_voltage
+
+interval:
+  - interval: 30s
+    then:
+      - switch.turn_on: thermistor_voltage
+      - component.update: thermistor_ref_sensor
+      - switch.turn_off: thermistor_voltage
+
+##################################
+## STEPPER MOTOR DRIVER OUTPUTS ##
+##################################
+output:
+  # ENABLE PIN FOR MOTOR COILS
+  - platform: gpio
+    pin: GPIO21
+    id: stepper_enable_pin
+
+  # PIN 1A on L293D H-Bridge
+  # CONTROLS 1Y
+  - platform: gpio
+    pin: GPIO17
+    id: stepper_orange_cable
+
+  # PIN 3A on L293D H-Bridge
+  # CONTROLS 3Y
+  - platform: gpio
+    pin: GPIO5
+    id: stepper_black_cable
+
+  # PIN 2A on L293D H-Bridge
+  # CONTROLS 2Y
+  - platform: gpio
+    pin: GPIO18
+    id: stepper_yellow_cable
+
+  # PIN 4A on L293D H-Bridge
+  # CONTROLS 4Y
+  - platform: gpio
+    pin: GPIO19
+    id: stepper_brown_cable
+
+number:
+  ###############################################
+  ## SET THE POSITION THE VALVE SHOULD MOVE TO ##
+  ###############################################
+  - platform: template
+    id: water_valve_position
+    name: "Water Valve Position"
+    min_value: 0
+    max_value: 100
+    # 100 / max_rotary_encoder_position
+    step: 12.5
+    unit_of_measurement: "%"
+    optimistic: true
+
+  - platform: template
+    id: flow_rate_setpoint
+    name: "Flow Rate Setpoint"
+    min_value: 0
+    max_value: 30
+    step: 0.1
+    unit_of_measurement: "L/min"
+    optimistic:
+      true
+      # - lambda: |-
+      # "//IF TOGGLe SWITCH TO ENTER PID MODE ON => EXECUTE PID CONTROL SCRIPT"
+      # "//TRY TO LOOK FOR PID COMPONENT, OR EXPAND MYSELF AND USE IT TO KEEP FLOW RATE CONSTANT"
+
+button:
+  ##########################################
+  ### BUTTON TO EXECUTE MOVE TO POSITION ###
+  ##########################################
+  - platform: template
+    id: execute_move_to_position
+    name: "Execute Move to Position"
+    on_press:
+      - script.execute:
+          id: move_valve_to_position
+          # convert the percentage value back to a integer to know when the rotary encoder needs to stop
+          # subtracting from maximum, because in the water_valve_position number, 100% => open, but open => rotary_position is 0
+          required_position: !lambda return id(max_rotary_encoder_position) - (id(water_valve_position).state * id(max_rotary_encoder_position) / 100);
+      # Logging
+      - lambda: |-
+          int position = id(max_rotary_encoder_position) - (id(water_valve_position).state * id(max_rotary_encoder_position) / 100);
+          ESP_LOGD("custom", "Water Valve position set to %d. Open = 0, Closed = %d", position, id(max_rotary_encoder_position));
+
+  ################################################
+  ##### OPEN/CLOSE BUTTONS IN HOME ASSISTANT #####
+  ################################################
+  - platform: template
+    name: "Open Water Valve"
+    id: open_water_valve_button
+    on_press:
+      - script.execute: open_water_valve
+
+  - platform: template
+    name: "Close Water Valve"
+    id: close_water_valve_button
+    on_press:
+      - script.execute: close_water_valve
+
+######################################
+## VALVE OPEN/CLOSED LIMIT SWITCHES ##
+######################################
+binary_sensor:
+  - platform: gpio
+    pin: GPIO35
+    name: "Valve Open Limit Switch"
+    id: valve_open_limit_switch
+    on_press:
+      then:
+        - script.execute: reset_rotary_encoder_count
+        - number.set:
+            id: water_valve_position
+            value: 100
+        - component.update: water_valve_position
+        - script.execute: stop_valve_rotation
+
+  - platform: gpio
+    pin: GPIO34
+    name: "Valve Closed Limit Switch"
+    id: valve_closed_limit_switch
+    on_press:
+      then:
+        - number.set:
+            id: water_valve_position
+            value: 0
+        - component.update: water_valve_position
+        - script.execute: stop_valve_rotation
+
+  #########################################
+  ## PHYSICAL BUTTON TO OPEN/CLOSE VALVE ##
+  #########################################
+  - platform: gpio
+    pin:
+      number: GPIO22
+      inverted: True
+      mode:
+        input: True
+        pullup: True
+    filters:
+      - delayed_on: 10ms
+    id: open_close_valve_button
+    on_press:
+      then:
+        if:
+          condition:
+            or:
+              # If the valve is fully closed, OR if valve is not fully closed, but not fully open either
+              # ie. it is partially open
+              # Then open the valve fully
+              - binary_sensor.is_on: valve_closed_limit_switch
+              - binary_sensor.is_off: valve_open_limit_switch
+          then:
+            - script.execute: open_water_valve
+
+          else:
+            - script.execute: close_water_valve

@@ -1,0 +1,92 @@
+esphome:
+  name: fyp-temp-sensor
+  friendly_name: FYP Temp Sensor
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+#######################################
+# Home Assistant & WiFi & OTA Updates #
+#######################################
+logger:
+api:
+  encryption:
+    key: !secret TEMP_SENSOR_API_KEY
+ota:
+  password: !secret TEMP_SENSOR_OTA_PASSWORD
+wifi:
+  ssid: !secret WIFI_SSID
+  password: !secret WIFI_PASSWORD
+  # Manual IP for convenience when pinging
+  manual_ip:
+    static_ip: !secret TEMP_SENSOR_STATIC_IP
+    gateway: !secret HOTSPOT_DEFAULT_GATEWAY
+    subnet: !secret HOTSPOT_SUBNET
+  # Fallback Access Point - If WiFi fails, can still communicate with it
+  # Enable fallback hotspot in case wifi connection fails
+  ap:
+    ssid: !secret TEMP_SENSOR_AP_SSID
+    password: !secret TEMP_SENSOR_AP_PASSWORD
+captive_portal:
+
+#################################################################################
+#################################################################################
+
+sensor:
+  ############################
+  ## TEMP & HUMIDITY SENSOR ##
+  ############################
+  - platform: dht
+    pin: GPIO23
+    model: DHT11
+    temperature:
+      id: zone_air_temperature_sensor
+      name: "FYP Temperature"
+    humidity:
+      id: zone_air_relative_humidity_sensor
+      name: "FYP Relative Humidity"
+    update_interval: 60s
+
+  ########################
+  ## LIGHT SENSOR - LDR ##
+  ########################
+  - platform: adc
+    id: illuminance_sensor
+    pin: GPIO34
+    name: "LDR Light Sensor"
+    attenuation: auto
+    update_interval: 15s
+    filters:
+      - lambda: |-
+          const float max_voltage = 3.12; // Maximum voltage
+          const float min_voltage = 0.08; // Minimum voltage
+          float percentage = ((x - min_voltage) / (max_voltage - min_voltage)) * 100.0;
+          return (percentage < 0) ? 0 : (percentage > 100) ? 100 : percentage; // Keep value between 0 and 100
+    unit_of_measurement: "%"
+    accuracy_decimals: 2
+    icon: "mdi:brightness-5"
+
+#################
+## LCD Display ##
+#################
+display:
+  - platform: lcd_gpio
+    dimensions: 16x2
+    id: lcd_display
+    data_pins:
+      - GPIO32
+      - GPIO25
+      - GPIO26
+      - GPIO27
+    enable_pin: GPIO14
+    rs_pin: GPIO13
+    update_interval: 5s
+    lambda: |-
+      ////////////////////////////////////////////////////////////////////////////////////////
+      // \xDF is the hex code for the degree symbol for the LCD screen being used (LCD1602) //
+      ////////////////////////////////////////////////////////////////////////////////////////
+
+      it.printf(0, 0, "Temp:     %.1f\xDF" "C", id(zone_air_temperature_sensor).state);
+      it.printf(0, 1, "Humidity: %.1f %%", id(zone_air_relative_humidity_sensor).state);
